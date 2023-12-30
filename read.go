@@ -471,7 +471,7 @@ func readHeader(s *scanner) (*Header, error) {
 	if err != nil {
 		return nil, err
 	}
-	return &Header{lvl, attr, inlines}, nil
+	return &Header{attr, lvl, inlines}, nil
 }
 
 // LineBlock
@@ -784,20 +784,20 @@ func readCaption(s *scanner) (Caption, error) {
 	return Caption{hasShort, short, long}, nil
 }
 
-func readAttrKV(s *scanner) (AttrKV, error) {
+func readAttrKV(s *scanner) (KV, error) {
 	tup, err := tupler(s, 2)
 	if err != nil {
-		return AttrKV{}, err
+		return KV{}, err
 	}
 	key, tup, err := readItem(readString)(s, tup)
 	if err != nil {
-		return AttrKV{}, err
+		return KV{}, err
 	}
 	val, _, err := readItem(readString)(s, tup)
 	if err != nil {
-		return AttrKV{}, err
+		return KV{}, err
 	}
-	return AttrKV{key, val}, nil
+	return KV{key, val}, nil
 }
 
 func readAttr(s *scanner) (Attr, error) {
@@ -872,11 +872,19 @@ func readMetaValue(s *scanner) (MetaValue, error) {
 	}
 }
 
-func readMetaMap(s *scanner) (MetaMap, error) {
+func readMetaMap(s *scanner) (*MetaMap, error) {
+	if m, err := readMeta(s); err != nil {
+		return nil, err
+	} else {
+		return &MetaMap{m}, nil
+	}
+}
+
+func readMeta(s *scanner) ([]MetaMapEntry, error) {
 	if err := s.expect(tokLBrace); err != nil {
 		return nil, err
 	}
-	m := MetaMap{}
+	var m []MetaMapEntry
 	for {
 		if tok := s.peek(); tok == tokRBrace {
 			s.next()
@@ -911,11 +919,11 @@ func readMetaBool(s *scanner) (MetaBool, error) {
 	}
 }
 
-func readMetaList(s *scanner) (MetaList, error) {
+func readMetaList(s *scanner) (*MetaList, error) {
 	if list, err := listr(readMetaValue)(s); err != nil {
 		return nil, err
 	} else {
-		return MetaList(list), nil
+		return &MetaList{list}, nil
 	}
 }
 
@@ -927,19 +935,19 @@ func readMetaString(s *scanner) (MetaString, error) {
 	}
 }
 
-func readMetaInlines(s *scanner) (MetaInlines, error) {
+func readMetaInlines(s *scanner) (*MetaInlines, error) {
 	if list, err := listr(readInline)(s); err != nil {
 		return nil, err
 	} else {
-		return MetaInlines(list), nil
+		return &MetaInlines{list}, nil
 	}
 }
 
-func readMetaBlocks(s *scanner) (MetaBlocks, error) {
+func readMetaBlocks(s *scanner) (*MetaBlocks, error) {
 	if list, err := listr(readBlock)(s); err != nil {
 		return nil, err
 	} else {
-		return MetaBlocks(list), nil
+		return &MetaBlocks{list}, nil
 	}
 }
 
@@ -1117,7 +1125,7 @@ func listr[T any, R func(*scanner) (T, error)](r R) func(*scanner) ([]T, error) 
 }
 
 // int reader
-func readInt(s *scanner) (int64, error) {
+func readInt(s *scanner) (int, error) {
 	if err := s.expect(tokNumber); err != nil {
 		return 0, err
 	}
@@ -1167,7 +1175,7 @@ func errorf(f string, a ...any) error {
 }
 
 // compares two semver versions
-func cmpSemver(mine, their []int64) int {
+func cmpSemver(mine, their []int) int {
 	var i int
 	for i = 0; i < len(mine); i++ {
 		if i >= len(their) {
@@ -1187,19 +1195,18 @@ func cmpSemver(mine, their []int64) int {
 	}
 }
 
-// Read parses a Pandoc AST JSON from the reader.
-func Read(r io.Reader) (*Doc, error) {
+// ReadFrom parses a Pandoc AST JSON from the reader.
+func ReadFrom(r io.Reader) (*Pandoc, error) {
 	var s = scanner{}
 	s.init(r)
 	if err := s.expect(tokLBrace); err != nil {
 		return nil, err
 	}
 	var (
-		doc                            = &Doc{}
+		doc                            = &Pandoc{}
 		err                            error
-		hasVersion, hasBlocks, hasMeta bool
 	)
-	for i := 0; i < 3; i++ {
+	for i := 3; i > 0; i-- {
 		if err := s.expect(tokStr); err != nil {
 			return nil, err
 		}
@@ -1207,53 +1214,23 @@ func Read(r io.Reader) (*Doc, error) {
 			return nil, errorf("expected string, got %s", s.string())
 		}
 		switch string(s.buf[s.str : s.pos-1]) {
-		case "pandoc-api-version":
-			if hasVersion {
-				return nil, errorf("invalid pandoc document")
-			}
-			hasVersion = true
-			if err := s.expect(tokColon); err != nil {
+		case "pandoc-api-version":			
+			if version, err := readField(&s, i, listr(readInt)); err != nil {
 				return nil, err
-			}
-			if doc.Version, err = listr(readInt)(&s); err != nil {
-				return nil, err
-			}
-			if cmpSemver(doc.Version, _Version) < 0 {
-				return nil, errorf("unsupported pandoc version %v", doc.Version)
+			} else if cmpSemver(version, _Version) < 0 {
+				return nil, errorf("unsupported pandoc version %v", version)
 			}
 		case "meta":
-			if hasMeta {
-				return nil, errorf("invalid pandoc document")
-			}
-			hasMeta = true
-			if err := s.expect(tokColon); err != nil {
-				return nil, err
-			}
-			if doc.Meta, err = readMetaMap(&s); err != nil {
+			if doc.Meta, err = readField(&s, i, readMeta); err != nil {
 				return nil, err
 			}
 		case "blocks":
-			if hasBlocks {
-				return nil, errorf("invalid pandoc document")
-			}
-			hasBlocks = true
-			if err := s.expect(tokColon); err != nil {
-				return nil, err
-			}
-			if doc.Blocks, err = listr(readBlock)(&s); err != nil {
+			if doc.Blocks, err = readField(&s, i, listr(readBlock)); err != nil {
 				return nil, err
 			}
 		default:
 			return nil, errorf("unknown pandoc field %q", s.string())
 		}
-		if i < 2 {
-			if err := s.expect(tokComma); err != nil {
-				return nil, err
-			}
-		}
-	}
-	if err := s.expect(tokRBrace); err != nil {
-		return nil, err
 	}
 	return doc, nil
 }

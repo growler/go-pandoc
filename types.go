@@ -10,13 +10,14 @@ import (
 )
 
 // Implemented Pandoc protocol version.
-const Version = "1.21.1"
+const Version = "1.23.1"
 
-var _Version = func() []int64 {
+var _Version = func() []int {
 	c := strings.Split(Version, ".")
-	v := make([]int64, len(c))
+	v := make([]int, len(c))
 	for i, s := range c {
-		v[i], _ = strconv.ParseInt(s, 10, 64)
+		n, _ := strconv.ParseInt(s, 10, 64)
+		v[i] = int(n)
 	}
 	return v
 }()
@@ -35,10 +36,31 @@ func Is[P any, S Element](elt S) bool {
 	return ok
 }
 
+// Returs a shallow copy of an element. Intended for use in Filter.
+func Clone[P Element](elt P) P {
+	return elt.clone().(P)
+}
+
 // Pandoc AST element interface
 type Element interface {
 	writable
 	element()
+	clone() Element
+}
+
+type inlinesContainer interface {
+	inlines() []Inline
+}
+
+type blocksContainer interface {
+	blocks() []Block
+}
+
+// Pandoc AST element that can be referred to.
+type Linkable interface {
+	Element
+	Ident() string
+	SetIdent(string)
 }
 
 // Pandoc AST object tag
@@ -59,6 +81,12 @@ type Inline interface {
 	inline()
 }
 
+// Pandoc AST inline's whitespaces (Space, SoftBreak, LineBreak)
+type WhiteSpace interface {
+	Inline
+	space()
+}
+
 // Pandoc AST block element
 type Block interface {
 	Element
@@ -73,15 +101,18 @@ type MetaValue interface {
 	meta()
 }
 
-// Doc document
-type Doc struct {
-	Version []int64
-	File    string
-	Meta    MetaMap
-	Blocks  []Block
+// Pandoc document
+type Pandoc struct {
+	Meta   Meta
+	Blocks []Block
 }
 
-func (*Doc) element() {}
+func (p *Pandoc) element() {}
+func (p *Pandoc) clone() Element {
+	c := *p
+	return &c
+}
+func (p *Pandoc) blocks() []Block { return p.Blocks }
 
 // Pandoc's MetaMap entry.
 type MetaMapEntry struct {
@@ -89,19 +120,15 @@ type MetaMapEntry struct {
 	Value MetaValue
 }
 
-func (MetaMapEntry) element() {}
+func (m MetaMapEntry) element()       {}
+func (m MetaMapEntry) clone() Element { return m }
 
-// Pandoc document metadata map
-type MetaMap []MetaMapEntry
+// Pandoc's Meta
+type Meta []MetaMapEntry
 
-const MetaMapTag = Tag("MetaMap")
-
-func (MetaMap) Tag() Tag { return MetaMapTag }
-func (MetaMap) element() {}
-func (MetaMap) meta()    {}
-
-func (m MetaMap) Get(key string) MetaValue {
-	for _, e := range m {
+// Returns a value of the given key or nil if the key is not present.
+func (m *Meta) Get(key string) MetaValue {
+	for _, e := range *m {
 		if e.Key == key {
 			return e.Value
 		}
@@ -109,82 +136,286 @@ func (m MetaMap) Get(key string) MetaValue {
 	return nil
 }
 
-func (m *MetaMap) Set(key string, value MetaValue) {
+// Sets a value for the given key. If the value is nil, the key is removed.
+func (m *Meta) Set(key string, value MetaValue) {
 	for i, e := range *m {
 		if e.Key == key {
-			(*m)[i].Value = value
+			if value == nil {
+				*m = append((*m)[:i], (*m)[i+1:]...)
+			} else {
+				(*m)[i].Value = value
+			}
 			return
 		}
 	}
-	*m = append(*m, MetaMapEntry{key, value})
+	if value != nil {
+		*m = append(*m, MetaMapEntry{key, value})
+	}
+}
+
+// Sets a boolean value for the given key.
+func (m *Meta) SetBool(key string, value bool) {
+	m.Set(key, MetaBool(value))
+}
+
+// Sets a list of blocks for the given key.
+func (m *Meta) SetBlocks(key string, value ...Block) {
+	m.Set(key, &MetaBlocks{value})
+}
+
+// Sets a list of inlines for the given key.
+func (m *Meta) SetInlines(key string, value ...Inline) {
+	m.Set(key, &MetaInlines{value})
+}
+
+// Sets a string value for the given key.
+func (m *Meta) SetString(key string, value string) {
+	m.Set(key, MetaString(value))
+}
+
+// Pandoc document metadata map
+type MetaMap struct {
+	Entries Meta
+}
+
+const MetaMapTag = Tag("MetaMap")
+
+func (m *MetaMap) Tag() Tag { return MetaMapTag }
+func (m *MetaMap) clone() Element {
+	c := *m
+	return &c
+}
+func (m *MetaMap) element() {}
+func (m *MetaMap) meta()    {}
+
+// Returns a value of the given key or nil if the key is not present.
+func (m *MetaMap) Get(key string) MetaValue {
+	return m.Entries.Get(key)
+}
+
+// Sets a value for the given key. If the value is nil, the key is removed.
+func (m *MetaMap) Set(key string, value MetaValue) {
+	m.Entries.Set(key, value)
 }
 
 // Pandoc document metadata list
-type MetaList []MetaValue
+type MetaList struct {
+	Entries []MetaValue
+}
 
 const MetaListTag = Tag("MetaList")
 
-func (MetaList) Tag() Tag { return MetaListTag }
-func (MetaList) element() {}
-func (MetaList) meta()    {}
+func (m *MetaList) Tag() Tag { return MetaListTag }
+func (m *MetaList) clone() Element {
+	c := *m
+	return &c
+}
+func (m *MetaList) element() {}
+func (m *MetaList) meta()    {}
 
 // Pandoc document metadata inlines block
-type MetaInlines []Inline
+type MetaInlines struct {
+	Inlines []Inline
+}
 
 const MetaInlinesTag = Tag("MetaInlines")
 
-func (MetaInlines) Tag() Tag { return MetaInlinesTag }
-func (MetaInlines) element() {}
-func (MetaInlines) meta()    {}
+func (m *MetaInlines) Tag() Tag          { return MetaInlinesTag }
+func (m *MetaInlines) inlines() []Inline { return m.Inlines }
+func (m *MetaInlines) clone() Element {
+	c := *m
+	return &c
+}
+func (m *MetaInlines) element() {}
+func (m *MetaInlines) meta()    {}
 
 // Pandoc document metadata blocks block
-type MetaBlocks []Block
+type MetaBlocks struct {
+	Blocks []Block
+}
 
 const MetaBlocksTag = Tag("MetaBlocks")
 
-func (MetaBlocks) Tag() Tag { return MetaBlocksTag }
-func (MetaBlocks) element() {}
-func (MetaBlocks) meta()    {}
+func (m *MetaBlocks) Tag() Tag        { return MetaBlocksTag }
+func (m *MetaBlocks) blocks() []Block { return m.Blocks }
+func (m *MetaBlocks) clone() Element {
+	c := *m
+	return &c
+}
+func (m *MetaBlocks) element() {}
+func (m *MetaBlocks) meta()    {}
 
 // Pandoc document metadata boolean
 type MetaBool bool
 
 const MetaBoolTag = Tag("MetaBool")
 
-func (MetaBool) Tag() Tag { return MetaBoolTag }
-func (MetaBool) element() {}
-func (MetaBool) meta()    {}
+func (b MetaBool) Tag() Tag       { return MetaBoolTag }
+func (b MetaBool) clone() Element { return b }
+func (b MetaBool) element()       {}
+func (b MetaBool) meta()          {}
 
 // Pandoc document metadata string
 type MetaString string
 
 const MetaStringTag = Tag("MetaString")
 
-func (MetaString) Tag() Tag { return MetaStringTag }
-func (MetaString) element() {}
-func (MetaString) meta()    {}
+func (MetaString) Tag() Tag         { return MetaStringTag }
+func (s MetaString) clone() Element { return s }
+func (MetaString) element()         {}
+func (MetaString) meta()            {}
 
-type AttrKV struct {
+// Pandoc elements attribute' key-value pair.
+type KV struct {
 	Key   string
 	Value string
 }
 
+// Pandoc elements attribute.
 type Attr struct {
-	Id      string
-	Classes []string
-	Attrs   []AttrKV
+	Id      string   // Element ID
+	Classes []string // Element classes
+	KVs     []KV     // Element attributes' key-value pairs
+}
+
+// Returns the element's ID.
+func (a *Attr) Ident() string {
+	return a.Id
+}
+
+// Sets the element's ID in-place. This method is intended to quickly
+// modify an element's ID in Query or QueryE without cloning it.
+func (a *Attr) SetIdent(id string) {
+	a.Id = id
+}
+
+// Returns a copy of attributes with the given ID.
+func (a Attr) WithIdent(id string) Attr {
+	a.Id = id
+	return a
+}
+
+// Returns true if attribute has the given class.
+func (a *Attr) HasClass(c string) bool {
+	for _, cl := range a.Classes {
+		if cl == c {
+			return true
+		}
+	}
+	return false
+}
+
+// Returns true if attribute has one of the given classes.
+func (a *Attr) HasOneOfClasses(c ...string) bool {
+	for _, cl := range a.Classes {
+		for _, c := range c {
+			if cl == c {
+				return true
+			}
+		}
+	}
+	return false
+}
+
+// Returns a value of the given key or false if the key is not present.
+func (a *Attr) Get(key string) (string, bool) {
+	for _, kv := range a.KVs {
+		if kv.Key == key {
+			return kv.Value, true
+		}
+	}
+	return "", false
+}
+
+// Returns a copy of attributes with the given class.
+func (a Attr) WithClass(c string) Attr {
+	if !a.HasClass(c) {
+		a.Classes = append(a.Classes, c)
+	}
+	return a
+}
+
+// Returns a copy of attributes without the given class.
+func (a Attr) WithoutClass(c string) Attr {
+	for i, cl := range a.Classes {
+		if cl == c {
+			a.Classes = append(a.Classes[:i], a.Classes[i+1:]...)
+			return a
+		}
+	}
+	return a
+}
+
+// Returns a copy of attributes with the given key-value pair.
+func (a Attr) WithKV(key, value string) Attr {
+	for i, kv := range a.KVs {
+		if kv.Key == key {
+			a.KVs[i].Value = value
+			return a
+		}
+	}
+	a.KVs = append(a.KVs, KV{key, value})
+	return a
+}
+
+// Returns a copy of attributes without the given key.
+func (a Attr) WithoutKey(key string) Attr {
+	for i, kv := range a.KVs {
+		if kv.Key == key {
+			a.KVs = append(a.KVs[:i], a.KVs[i+1:]...)
+			return a
+		}
+	}
+	return a
+}
+
+// Returns a copy of attributes with the given key-value pairs.
+func (a Attr) WithKVs(pairs ...string) Attr {
+	kvs := append(make([]KV, 0, len(a.KVs)+len(pairs)/2), a.KVs...)
+next:
+	for i := 0; i+1 < len(pairs); i += 2 {
+		for j := range kvs {
+			if kvs[j].Key == pairs[i] {
+				kvs[j].Value = pairs[i+1]
+				continue next
+			}
+		}
+		kvs = append(kvs, KV{pairs[i], pairs[i+1]})
+	}
+	a.KVs = kvs
+	return a
+}
+
+// Returns a copy of attributes without the given keys.
+func (a Attr) WithoutKeys(keys ...string) Attr {
+	kvs := append(make([]KV, 0, len(a.KVs)), a.KVs...)
+	for i := range keys {
+		for j := range kvs {
+			if a.KVs[j].Key == keys[i] {
+				copy(kvs[j:], kvs[j+1:])
+				kvs = kvs[:len(kvs)-1]
+				break
+			}
+		}
+	}
+	a.KVs = kvs
+	return a
 }
 
 // Text (string)
 type Str struct {
-	Str string
+	Text string
 }
 
 const StrTag = Tag("Str")
 
-func (Str) Tag() Tag  { return StrTag }
-func (*Str) inline()  {}
-func (*Str) element() {}
+func (s *Str) Tag() Tag { return StrTag }
+func (s *Str) clone() Element {
+	c := *s
+	return &c
+}
+func (s *Str) inline()  {}
+func (s *Str) element() {}
 
 // Emphasized text (list of inlines)
 type Emph struct {
@@ -193,9 +424,14 @@ type Emph struct {
 
 const EmphTag = Tag("Emph")
 
-func (Emph) Tag() Tag  { return EmphTag }
-func (*Emph) inline()  {}
-func (*Emph) element() {}
+func (e *Emph) Tag() Tag          { return EmphTag }
+func (e *Emph) inlines() []Inline { return e.Inlines }
+func (e *Emph) clone() Element {
+	c := *e
+	return &c
+}
+func (e *Emph) inline()  {}
+func (e *Emph) element() {}
 
 // Underlined text (list of inlines)
 type Underline struct {
@@ -204,9 +440,14 @@ type Underline struct {
 
 const UnderlineTag = Tag("Underline")
 
-func (Underline) Tag() Tag  { return UnderlineTag }
-func (*Underline) inline()  {}
-func (*Underline) element() {}
+func (u *Underline) Tag() Tag          { return UnderlineTag }
+func (u *Underline) inlines() []Inline { return u.Inlines }
+func (u *Underline) inline()           {}
+func (u *Underline) clone() Element {
+	c := *u
+	return &c
+}
+func (u *Underline) element() {}
 
 // Strongly emphasized text (list of inlines)
 type Strong struct {
@@ -215,9 +456,14 @@ type Strong struct {
 
 const StrongTag = Tag("Strong")
 
-func (Strong) Tag() Tag  { return StrongTag }
-func (*Strong) inline()  {}
-func (*Strong) element() {}
+func (s *Strong) Tag() Tag          { return StrongTag }
+func (s *Strong) inlines() []Inline { return s.Inlines }
+func (s *Strong) inline()           {}
+func (s *Strong) clone() Element {
+	c := *s
+	return &c
+}
+func (s *Strong) element() {}
 
 // Strikeout text (list of inlines)
 type Strikeout struct {
@@ -226,9 +472,14 @@ type Strikeout struct {
 
 const StrikeoutTag = Tag("Strikeout")
 
-func (Strikeout) Tag() Tag  { return StrikeoutTag }
-func (*Strikeout) inline()  {}
-func (*Strikeout) element() {}
+func (s *Strikeout) Tag() Tag          { return StrikeoutTag }
+func (s *Strikeout) inlines() []Inline { return s.Inlines }
+func (s *Strikeout) inline()           {}
+func (s *Strikeout) clone() Element {
+	c := *s
+	return &c
+}
+func (s *Strikeout) element() {}
 
 // Superscripted text (list of inlines)
 type Superscript struct {
@@ -237,9 +488,14 @@ type Superscript struct {
 
 const SuperscriptTag = Tag("Superscript")
 
-func (Superscript) Tag() Tag  { return SuperscriptTag }
-func (*Superscript) inline()  {}
-func (*Superscript) element() {}
+func (s *Superscript) Tag() Tag          { return SuperscriptTag }
+func (s *Superscript) inlines() []Inline { return s.Inlines }
+func (s *Superscript) clone() Element {
+	c := *s
+	return &c
+}
+func (s *Superscript) inline()  {}
+func (s *Superscript) element() {}
 
 // Subscripted text (list of inlines)
 type Subscript struct {
@@ -248,9 +504,14 @@ type Subscript struct {
 
 const SubscriptTag = Tag("Subscript")
 
-func (Subscript) Tag() Tag  { return SubscriptTag }
-func (*Subscript) inline()  {}
-func (*Subscript) element() {}
+func (s *Subscript) Tag() Tag          { return SubscriptTag }
+func (s *Subscript) inlines() []Inline { return s.Inlines }
+func (s *Subscript) inline()           {}
+func (s *Subscript) clone() Element {
+	c := *s
+	return &c
+}
+func (s *Subscript) element() {}
 
 // Small capitals (list of inlines)
 type SmallCaps struct {
@@ -259,9 +520,14 @@ type SmallCaps struct {
 
 const SmallCapsTag = Tag("SmallCaps")
 
-func (SmallCaps) Tag() Tag  { return SmallCapsTag }
-func (*SmallCaps) inline()  {}
-func (*SmallCaps) element() {}
+func (s *SmallCaps) Tag() Tag          { return SmallCapsTag }
+func (s *SmallCaps) inlines() []Inline { return s.Inlines }
+func (s *SmallCaps) inline()           {}
+func (s *SmallCaps) clone() Element {
+	c := *s
+	return &c
+}
+func (s *SmallCaps) element() {}
 
 type QuoteType Tag
 
@@ -278,9 +544,14 @@ type Quoted struct {
 
 const QuotedTag = Tag("Quoted")
 
-func (Quoted) Tag() Tag  { return QuotedTag }
-func (*Quoted) inline()  {}
-func (*Quoted) element() {}
+func (q *Quoted) Tag() Tag          { return QuotedTag }
+func (q *Quoted) inlines() []Inline { return q.Inlines }
+func (q *Quoted) inline()           {}
+func (q *Quoted) clone() Element {
+	c := *q
+	return &c
+}
+func (q *Quoted) element() {}
 
 type CitationMode Tag
 
@@ -295,8 +566,8 @@ type Citation struct {
 	Prefix  []Inline
 	Suffix  []Inline
 	Mode    CitationMode
-	NoteNum int64
-	Hash    int64
+	NoteNum int
+	Hash    int
 }
 
 // Citation (list of inlines)
@@ -307,57 +578,69 @@ type Cite struct {
 
 const CiteTag = Tag("Cite")
 
-func (Cite) Tag() Tag  { return CiteTag }
-func (*Cite) inline()  {}
-func (*Cite) element() {}
+func (c *Cite) Tag() Tag { return CiteTag }
+
+func (c *Cite) inline() {}
+func (c *Cite) clone() Element {
+	c2 := *c
+	return &c2
+}
+func (c *Cite) element() {}
 
 // Inline code (literal)
 type Code struct {
-	Attr Attr
+	Attr
 	Text string
 }
 
 const CodeTag = Tag("Code")
 
-func (Code) Tag() Tag  { return CodeTag }
-func (*Code) inline()  {}
-func (*Code) element() {}
+func (c *Code) Tag() Tag { return CodeTag }
+func (c *Code) clone() Element {
+	c1 := *c
+	return &c1
+}
+func (c *Code) inline()  {}
+func (c *Code) element() {}
 
 var SP = &Space{}
 
 // Inter-word space
-type Space struct {
-}
+type Space struct{}
 
 const SpaceTag = Tag("Space")
 
-func (Space) Tag() Tag  { return SpaceTag }
-func (*Space) inline()  {}
-func (*Space) element() {}
+func (*Space) Tag() Tag       { return SpaceTag }
+func (*Space) space()         {}
+func (*Space) clone() Element { return SP }
+func (*Space) inline()        {}
+func (*Space) element()       {}
 
 var SB = &SoftBreak{}
 
 // Soft line break
-type SoftBreak struct {
-}
+type SoftBreak struct{}
 
 const SoftBreakTag = Tag("SoftBreak")
 
-func (SoftBreak) Tag() Tag  { return SoftBreakTag }
-func (*SoftBreak) inline()  {}
-func (*SoftBreak) element() {}
+func (*SoftBreak) Tag() Tag       { return SoftBreakTag }
+func (*SoftBreak) space()         {}
+func (*SoftBreak) clone() Element { return SB }
+func (*SoftBreak) inline()        {}
+func (*SoftBreak) element()       {}
 
 var LB = &LineBreak{}
 
 // Hard line break
-type LineBreak struct {
-}
+type LineBreak struct{}
 
 const LineBreakTag = Tag("LineBreak")
 
-func (LineBreak) Tag() Tag  { return LineBreakTag }
-func (*LineBreak) inline()  {}
-func (*LineBreak) element() {}
+func (*LineBreak) Tag() Tag       { return LineBreakTag }
+func (*LineBreak) space()         {}
+func (*LineBreak) clone() Element { return LB }
+func (*LineBreak) inline()        {}
+func (*LineBreak) element()       {}
 
 type MathType Tag
 
@@ -374,9 +657,13 @@ type Math struct {
 
 const MathTag = Tag("Math")
 
-func (Math) Tag() Tag  { return MathTag }
-func (*Math) inline()  {}
-func (*Math) element() {}
+func (m *Math) Tag() Tag { return MathTag }
+func (m *Math) clone() Element {
+	c := *m
+	return &c
+}
+func (m *Math) inline()  {}
+func (m *Math) element() {}
 
 // Raw inline
 type RawInline struct {
@@ -386,9 +673,13 @@ type RawInline struct {
 
 const RawInlineTag = Tag("RawInline")
 
-func (RawInline) Tag() Tag  { return RawInlineTag }
-func (*RawInline) element() {}
-func (*RawInline) inline()  {}
+func (r *RawInline) Tag() Tag { return RawInlineTag }
+func (r *RawInline) clone() Element {
+	c := *r
+	return &c
+}
+func (r *RawInline) element() {}
+func (r *RawInline) inline()  {}
 
 type Target struct {
 	Url   string
@@ -397,29 +688,39 @@ type Target struct {
 
 // Hyperlink: alt text (list of inlines), target
 type Link struct {
-	Attr    Attr
+	Attr
 	Inlines []Inline
 	Target  Target
 }
 
 const LinkTag = Tag("Link")
 
-func (Link) Tag() Tag  { return LinkTag }
-func (*Link) inline()  {}
-func (*Link) element() {}
+func (l *Link) Tag() Tag          { return LinkTag }
+func (l *Link) inlines() []Inline { return l.Inlines }
+func (l *Link) clone() Element {
+	c := *l
+	return &c
+}
+func (l *Link) inline()  {}
+func (l *Link) element() {}
 
 // Image: alt text (list of inlines), target
 type Image struct {
-	Attr    Attr
+	Attr
 	Inlines []Inline
 	Target  Target
 }
 
 const ImageTag = Tag("Image")
 
-func (Image) Tag() Tag  { return ImageTag }
-func (*Image) element() {}
-func (*Image) inline()  {}
+func (i *Image) Tag() Tag          { return ImageTag }
+func (i *Image) inlines() []Inline { return i.Inlines }
+func (i *Image) clone() Element {
+	c := *i
+	return &c
+}
+func (i *Image) element() {}
+func (i *Image) inline()  {}
 
 // Footnote: list of blocks
 type Note struct {
@@ -428,21 +729,31 @@ type Note struct {
 
 const NoteTag = Tag("Note")
 
-func (Note) Tag() Tag  { return NoteTag }
-func (*Note) element() {}
-func (*Note) inline()  {}
+func (n *Note) Tag() Tag        { return NoteTag }
+func (n *Note) blocks() []Block { return n.Blocks }
+func (n *Note) clone() Element {
+	c := *n
+	return &c
+}
+func (n *Note) element() {}
+func (n *Note) inline()  {}
 
 // Generic inline container with attributes
 type Span struct {
-	Attr    Attr
+	Attr
 	Inlines []Inline
 }
 
 const SpanTag = Tag("Span")
 
-func (Span) Tag() Tag  { return SpanTag }
-func (*Span) inline()  {}
-func (*Span) element() {}
+func (s *Span) Tag() Tag          { return SpanTag }
+func (s *Span) inlines() []Inline { return s.Inlines }
+func (s *Span) clone() Element {
+	c := *s
+	return &c
+}
+func (s *Span) inline()  {}
+func (s *Span) element() {}
 
 // Plain text, not a paragraph
 type Plain struct {
@@ -451,9 +762,14 @@ type Plain struct {
 
 const PlainTag = Tag("Plain")
 
-func (Plain) Tag() Tag  { return PlainTag }
-func (*Plain) block()   {}
-func (*Plain) element() {}
+func (p *Plain) Tag() Tag          { return PlainTag }
+func (p *Plain) inlines() []Inline { return p.Inlines }
+func (p *Plain) clone() Element {
+	c := *p
+	return &c
+}
+func (p *Plain) block()   {}
+func (p *Plain) element() {}
 
 // Paragraph (list of inlines)
 type Para struct {
@@ -462,9 +778,14 @@ type Para struct {
 
 const ParaTag = Tag("Para")
 
-func (Para) Tag() Tag  { return ParaTag }
-func (*Para) block()   {}
-func (*Para) element() {}
+func (p *Para) Tag() Tag          { return ParaTag }
+func (p *Para) inlines() []Inline { return p.Inlines }
+func (p *Para) clone() Element {
+	c := *p
+	return &c
+}
+func (p *Para) block()   {}
+func (p *Para) element() {}
 
 // Multiple non-breaking lines
 type LineBlock struct {
@@ -473,21 +794,29 @@ type LineBlock struct {
 
 const LineBlockTag = Tag("LineBlock")
 
-func (LineBlock) Tag() Tag  { return LineBlockTag }
-func (*LineBlock) block()   {}
-func (*LineBlock) element() {}
+func (b *LineBlock) Tag() Tag { return LineBlockTag }
+func (b *LineBlock) clone() Element {
+	c := *b
+	return &c
+}
+func (b *LineBlock) block()   {}
+func (b *LineBlock) element() {}
 
 // Code block (literal)
 type CodeBlock struct {
-	Attr Attr
+	Attr
 	Text string
 }
 
 const CodeBlockTag = Tag("CodeBlock")
 
-func (CodeBlock) Tag() Tag  { return CodeBlockTag }
-func (*CodeBlock) block()   {}
-func (*CodeBlock) element() {}
+func (b *CodeBlock) Tag() Tag { return CodeBlockTag }
+func (b *CodeBlock) clone() Element {
+	c := *b
+	return &c
+}
+func (b *CodeBlock) block()   {}
+func (b *CodeBlock) element() {}
 
 // Raw block
 type RawBlock struct {
@@ -497,9 +826,13 @@ type RawBlock struct {
 
 const RawBlockTag = Tag("RawBlock")
 
-func (RawBlock) Tag() Tag  { return RawBlockTag }
-func (*RawBlock) block()   {}
-func (*RawBlock) element() {}
+func (b *RawBlock) Tag() Tag { return RawBlockTag }
+func (b *RawBlock) clone() Element {
+	c := *b
+	return &c
+}
+func (b *RawBlock) block()   {}
+func (b *RawBlock) element() {}
 
 // Block quote (list of blocks)
 type BlockQuote struct {
@@ -508,9 +841,14 @@ type BlockQuote struct {
 
 const BlockQuoteTag = Tag("BlockQuote")
 
-func (BlockQuote) Tag() Tag  { return BlockQuoteTag }
-func (*BlockQuote) block()   {}
-func (*BlockQuote) element() {}
+func (b *BlockQuote) Tag() Tag        { return BlockQuoteTag }
+func (b *BlockQuote) blocks() []Block { return b.Blocks }
+func (b *BlockQuote) clone() Element {
+	c := *b
+	return &c
+}
+func (b *BlockQuote) block()   {}
+func (b *BlockQuote) element() {}
 
 type ListNumberStyle Tag
 
@@ -534,7 +872,7 @@ const (
 )
 
 type ListAttrs struct {
-	Start     int64
+	Start     int
 	Style     ListNumberStyle
 	Delimiter ListNumberDelim
 }
@@ -547,9 +885,13 @@ type OrderedList struct {
 
 const OrderedListTag = Tag("OrderedList")
 
-func (OrderedList) Tag() Tag  { return OrderedListTag }
-func (*OrderedList) block()   {}
-func (*OrderedList) element() {}
+func (l *OrderedList) Tag() Tag { return OrderedListTag }
+func (l *OrderedList) clone() Element {
+	c := *l
+	return &c
+}
+func (l *OrderedList) block()   {}
+func (l *OrderedList) element() {}
 
 // Bullet list (list of items, each a list of blocks)
 type BulletList struct {
@@ -558,9 +900,13 @@ type BulletList struct {
 
 const BulletListTag = Tag("BulletList")
 
-func (BulletList) Tag() Tag  { return BulletListTag }
-func (*BulletList) block()   {}
-func (*BulletList) element() {}
+func (l *BulletList) Tag() Tag { return BulletListTag }
+func (l *BulletList) clone() Element {
+	c := *l
+	return &c
+}
+func (l *BulletList) block()   {}
+func (l *BulletList) element() {}
 
 type Definition struct {
 	Term       []Inline
@@ -574,34 +920,63 @@ type DefinitionList struct {
 
 const DefinitionListTag = Tag("DefinitionList")
 
-func (DefinitionList) Tag() Tag  { return DefinitionListTag }
-func (*DefinitionList) block()   {}
-func (*DefinitionList) element() {}
+func (d *DefinitionList) Tag() Tag { return DefinitionListTag }
+func (d *DefinitionList) clone() Element {
+	c := *d
+	return &c
+}
+func (d *DefinitionList) block()   {}
+func (d *DefinitionList) element() {}
 
 var HR = &HorizontalRule{}
 
 // Horizontal rule
-type HorizontalRule struct {
-}
+type HorizontalRule struct{}
 
 const HorizontalRuleTag = Tag("HorizontalRule")
 
-func (HorizontalRule) Tag() Tag  { return HorizontalRuleTag }
-func (*HorizontalRule) block()   {}
-func (*HorizontalRule) element() {}
+func (*HorizontalRule) Tag() Tag       { return HorizontalRuleTag }
+func (*HorizontalRule) clone() Element { return HR }
+func (*HorizontalRule) block()         {}
+func (*HorizontalRule) element()       {}
 
 // Header - level (integer) and text (inlines)
 type Header struct {
-	Level   int64
-	Attr    Attr
+	Attr
+	Level   int
 	Inlines []Inline
 }
 
 const HeaderTag = Tag("Header")
 
-func (Header) Tag() Tag  { return HeaderTag }
-func (*Header) block()   {}
-func (*Header) element() {}
+func (h *Header) Tag() Tag          { return HeaderTag }
+func (h *Header) inlines() []Inline { return h.Inlines }
+func (h *Header) clone() Element {
+	c := *h
+	return &c
+}
+func (h *Header) block()   {}
+func (h *Header) element() {}
+
+func (h *Header) Title() string {
+	var sb strings.Builder
+	walkList(h.Inlines, func(i Inline) ([]Inline, error) {
+		switch i := i.(type) {
+		case *Str:
+			sb.WriteString(i.Text)
+		case *Space:
+			sb.WriteByte(' ')
+		case *SoftBreak:
+			sb.WriteByte('\n')
+		case *LineBreak:
+			sb.WriteByte('\n')
+		case *Note:
+			return nil, Skip
+		}
+		return nil, Continue
+	})
+	return sb.String()
+}
 
 type Caption struct {
 	HasShort bool
@@ -643,26 +1018,26 @@ type ColSpec struct {
 }
 
 type TableHeadFoot struct {
-	Attr Attr
+	Attr
 	Rows []TableRow
 }
 
 type TableRow struct {
-	Attr  Attr
+	Attr
 	Cells []TableCell
 }
 
 type TableCell struct {
-	Attr    Attr
+	Attr
 	Align   Alignment
-	RowSpan int64
-	ColSpan int64
+	RowSpan int
+	ColSpan int
 	Blocks  []Block
 }
 
 type TableBody struct {
-	Attr           Attr
-	RowHeadColumns int64
+	Attr
+	RowHeadColumns int
 	Head           []TableRow
 	Body           []TableRow
 }
@@ -670,7 +1045,7 @@ type TableBody struct {
 // Table, with attributes, caption, optional short caption, column alignments
 // and widths (required), table head, table bodies, and table foot
 type Table struct {
-	Attr    Attr
+	Attr
 	Caption Caption
 	Aligns  []ColSpec
 	Head    TableHeadFoot
@@ -680,31 +1055,44 @@ type Table struct {
 
 const TableTag = Tag("Table")
 
-func (Table) Tag() Tag  { return TableTag }
-func (*Table) block()   {}
-func (*Table) element() {}
+func (t *Table) Tag() Tag { return TableTag }
+func (t *Table) clone() Element {
+	c := *t
+	return &c
+}
+func (t *Table) block()   {}
+func (t *Table) element() {}
 
 // Figure, with attributes, caption, and content (list of blocks)
 type Figure struct {
-	Attr    Attr
+	Attr
 	Caption Caption
 	Blocks  []Block
 }
 
 const FigureTag = Tag("Figure")
 
-func (Figure) Tag() Tag  { return FigureTag }
-func (*Figure) block()   {}
-func (*Figure) element() {}
+func (f *Figure) Tag() Tag { return FigureTag }
+func (f *Figure) clone() Element {
+	c := *f
+	return &c
+}
+func (f *Figure) block()   {}
+func (f *Figure) element() {}
 
 // Generic block container with attributes
 type Div struct {
-	Attr   Attr
+	Attr
 	Blocks []Block
 }
 
 const DivTag = Tag("Div")
 
-func (Div) Tag() Tag  { return DivTag }
-func (*Div) block()   {}
-func (*Div) element() {}
+func (d *Div) Tag() Tag        { return DivTag }
+func (d *Div) blocks() []Block { return d.Blocks }
+func (d *Div) clone() Element {
+	c := *d
+	return &c
+}
+func (d *Div) block()   {}
+func (d *Div) element() {}

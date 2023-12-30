@@ -3,6 +3,7 @@ package pandoc
 import (
 	"io"
 	"math"
+	"os"
 	"strconv"
 	"strings"
 )
@@ -14,8 +15,8 @@ type writable interface {
 // interface check
 
 var _ []writable = []writable{
-	MetaMap{},
-	MetaList{},
+	&MetaMap{},
+	&MetaList{},
 
 	&Attr{},
 	&Str{},
@@ -52,7 +53,7 @@ var _ []writable = []writable{
 }
 
 func (s *Str) write(w io.Writer) error {
-	return withTag(s, str(s.Str)).write(w)
+	return withTag(s, str(s.Text)).write(w)
 }
 
 func (s *Emph) write(w io.Writer) error {
@@ -165,12 +166,12 @@ func (r *RawInline) write(w io.Writer) error {
 	return withTag(r, tuple2(str(r.Format), str(r.Text))).write(w)
 }
 
-func (a AttrKV) write(w io.Writer) error {
+func (a KV) write(w io.Writer) error {
 	return tuple2(str(a.Key), str(a.Value)).write(w)
 }
 
 func (a *Attr) write(w io.Writer) error {
-	return tuple3(str(a.Id), strList(a.Classes), list(a.Attrs)).write(w)
+	return tuple3(str(a.Id), strList(a.Classes), list(a.KVs)).write(w)
 }
 
 func (t *Target) write(w io.Writer) error {
@@ -408,12 +409,12 @@ func (m metaValue) write(w io.Writer) error {
 	return nil
 }
 
-func (m MetaInlines) write(w io.Writer) error {
-	return list(m).write(w)
+func (m *MetaInlines) write(w io.Writer) error {
+	return list(m.Inlines).write(w)
 }
 
-func (m MetaBlocks) write(w io.Writer) error {
-	return list(m).write(w)
+func (m *MetaBlocks) write(w io.Writer) error {
+	return list(m.Blocks).write(w)
 }
 
 func (m MetaString) write(w io.Writer) error {
@@ -444,8 +445,7 @@ func (m MetaMapEntry) write(w io.Writer) error {
 	return nil
 }
 
-// MetaMap
-func (m MetaMap) write(w io.Writer) error {
+func writeMetaMap(w io.Writer, m []MetaMapEntry) error {
 	if err := writeDelim(w, '{'); err != nil {
 		return err
 	}
@@ -462,18 +462,23 @@ func (m MetaMap) write(w io.Writer) error {
 	return writeDelim(w, '}')
 }
 
+// MetaMap
+func (m *MetaMap) write(w io.Writer) error {
+	return writeMetaMap(w, m.Entries)
+}
+
 // MetaList
-func (m MetaList) write(w io.Writer) error {
+func (m *MetaList) write(w io.Writer) error {
 	if err := writeDelim(w, '['); err != nil {
 		return err
 	}
-	for i := range m {
+	for i := range m.Entries {
 		if i > 0 {
 			if err := writeDelim(w, ','); err != nil {
 				return err
 			}
 		}
-		if err := mv(m[i]).write(w); err != nil {
+		if err := mv(m.Entries[i]).write(w); err != nil {
 			return err
 		}
 	}
@@ -506,9 +511,9 @@ func (s tstr) write(w io.Writer) error {
 	return writeDelim(w, '}')
 }
 
-func num(n int64) wnum { return wnum(n) }
+func num(n int) wnum { return wnum(n) }
 
-type wnum int64
+type wnum int
 
 func (n wnum) write(w io.Writer) error {
 	if _, err := w.Write(strconv.AppendInt(nil, int64(n), 10)); err != nil {
@@ -773,27 +778,34 @@ func appendQuote(b []byte, s string) []byte {
 	return b
 }
 
-func (p *Doc) write(w io.Writer) error {
-	if err := writeDelim(w, '{'); err != nil {
-		return err
-	}
+func writeVersion(w io.Writer) error {
 	if err := writeKey(w, "pandoc-api-version"); err != nil {
 		return err
 	}
 	if err := writeDelim(w, '['); err != nil {
 		return err
 	}
-	for i, n := range p.Version {
+	for i, n := range _Version {
 		if i > 0 {
 			if _, err := w.Write([]byte{','}); err != nil {
 				return err
 			}
 		}
-		if _, err := w.Write(strconv.AppendInt(nil, n, 10)); err != nil {
+		if _, err := w.Write(strconv.AppendInt(nil, int64(n), 10)); err != nil {
 			return err
 		}
 	}
 	if err := writeDelim(w, ']'); err != nil {
+		return err
+	}
+	return nil
+}
+
+func writeMany(w io.Writer, meta Meta, p ...*Pandoc) error {
+	if err := writeDelim(w, '{'); err != nil {
+		return err
+	}
+	if err := writeVersion(w); err != nil {
 		return err
 	}
 	if err := writeDelim(w, ','); err != nil {
@@ -802,7 +814,53 @@ func (p *Doc) write(w io.Writer) error {
 	if err := writeKey(w, "meta"); err != nil {
 		return err
 	}
-	if err := p.Meta.write(w); err != nil {
+	if err := writeMetaMap(w, meta); err != nil {
+		return err
+	}
+	if err := writeDelim(w, ','); err != nil {
+		return err
+	}
+	if err := writeKey(w, "blocks"); err != nil {
+		return err
+	}
+	if err := writeDelim(w, '['); err != nil {
+		return err
+	}
+	for i := range p {
+		for j := range p[i].Blocks {
+			if i > 0 || j > 0 {
+				if err := writeDelim(w, ','); err != nil {
+					return err
+				}
+			}
+			if err := p[i].Blocks[j].write(w); err != nil {
+				return err
+			}
+		}
+	}
+	if err := writeDelim(w, ']'); err != nil {
+		return err
+	}
+	if err := writeDelim(w, '}'); err != nil {
+		return err
+	}
+	return nil
+}
+
+func (p *Pandoc) write(w io.Writer) error {
+	if err := writeDelim(w, '{'); err != nil {
+		return err
+	}
+	if err := writeVersion(w); err != nil {
+		return err
+	}
+	if err := writeDelim(w, ','); err != nil {
+		return err
+	}
+	if err := writeKey(w, "meta"); err != nil {
+		return err
+	}
+	if err := writeMetaMap(w, p.Meta); err != nil {
 		return err
 	}
 	if err := writeDelim(w, ','); err != nil {
@@ -820,15 +878,35 @@ func (p *Doc) write(w io.Writer) error {
 	return nil
 }
 
-// Write writes the JSON encoding of elt to w.
+// Write writes the JSON encoding of pandoc AST to w.
 //
 // Example:
 //
-//	var doc *pandoc.Doc
+//	var doc pandoc.Pandoc
 //	...
-//	if err := pandoc.Write(os.Stdout, doc); err != nil {
+//	if err := doc.WriteTo(os.Stdout); err != nil {
 //		log.Fatal(err)
 //	}
-func Write[E Element](w io.Writer, elt E) error {
-	return elt.write(w)
+func (p *Pandoc) WriteTo (w io.Writer) error {
+	return p.write(w)
+}
+
+// Prints the JSON encoding of element e to w. 
+// Usefull for debugging.
+func Fprint(w io.Writer, e Element) error {
+	return e.write(w)
+}
+
+// Prints the JSON encoding of element e to stdout.
+// Usefull for debugging.
+func Print(e Element) error {
+	return e.write(os.Stdout)
+}
+
+// Returns the JSON encoding of element e as a string.
+// Usefull for debugging.
+func Sprint(e Element) string {
+	var b strings.Builder
+	_ = e.write(&b)
+	return b.String()
 }

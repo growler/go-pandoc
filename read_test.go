@@ -29,14 +29,14 @@ func TestAppendQuote(t *testing.T) {
 
 func TestCompareSemver(t *testing.T) {
 	var tests = []struct {
-		a, b []int64
+		a, b []int
 		want int
 	}{
-		{[]int64{1, 23, 1}, []int64{1, 23, 1}, 0},
-		{[]int64{1, 23, 1}, []int64{1, 23, 2}, -1},
-		{[]int64{1, 23}, []int64{1, 23, 2}, -1},
-		{[]int64{1, 23, 1}, []int64{1, 23}, 1},
-		{[]int64{1}, []int64{1, 23, 1}, -1},
+		{[]int{1, 23, 1}, []int{1, 23, 1}, 0},
+		{[]int{1, 23, 1}, []int{1, 23, 2}, -1},
+		{[]int{1, 23}, []int{1, 23, 2}, -1},
+		{[]int{1, 23, 1}, []int{1, 23}, 1},
+		{[]int{1}, []int{1, 23, 1}, -1},
 	}
 	for _, tt := range tests {
 		got := cmpSemver(tt.a, tt.b)
@@ -56,12 +56,12 @@ func TestPipe(t *testing.T) {
 	if err != nil {
 		t.Fatal(err)
 	}
-	doc, err := Read(bytes.NewReader(data))
+	doc, err := ReadFrom(bytes.NewReader(data))
 	if err != nil {
 		t.Fatal(err)
 	}
 	var b bytes.Buffer
-	if err := Write(&b, doc); err != nil {
+	if err := doc.WriteTo(&b); err != nil {
 		t.Fatal(err)
 	}
 	b.WriteByte('\n')
@@ -101,7 +101,7 @@ func BenchmarkParse(b *testing.B) {
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
 		r.Reset(data)
-		if _, err := Read(r); err != nil {
+		if _, err := ReadFrom(r); err != nil {
 			b.Fatal(err)
 		}
 	}
@@ -119,35 +119,33 @@ func BenchmarkQuery(b *testing.B) {
 		b.Fatal(err)
 	}
 	r := bytes.NewReader(data)	
-	doc, err := Read(r)
+	doc, err := ReadFrom(r)
 	if err != nil {
 		b.Fatal(err)
 	}
 	doc.Meta = nil
 	i := 0
-	Query(doc, func (Element) WalkResult {
+	Query(doc, func (Element) {
 		i++
-		return WalkContinue
 	})
 	b.ReportAllocs()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		Query(doc, func(elt *Str) WalkResult {
-			return WalkContinue
+		Query(doc, func(elt *Str) {
 		})
 	}
 }
 
 func TestRead(t *testing.T) {
 	r := strings.NewReader(t1)
-	doc, err := Read(r)
+	doc, err := ReadFrom(r)
 	if err != nil {
 		t.Fatal(err)
 	}
 	t.Logf("%#v", doc)
 }
 
-// func (intReader) read(d *json.Decoder) (int64, error) {
+// func (intReader) read(d *json.Decoder) (int, error) {
 // 	tok, err := d.Token()
 // 	if err != nil {
 // 		return 0, err
@@ -170,20 +168,6 @@ func TestRead(t *testing.T) {
 // 		t.Logf("l=%v", l)
 // 	}
 // }
-
-func readInt1(dec *json.Decoder) (int64, error) {
-	// off := dec.InputOffset()
-	tok, err := dec.Token()
-	if err != nil {
-		return 0, err
-	}
-	switch tok := tok.(type) {
-	case json.Number:
-		return tok.Int64()
-	}
-	return 0, errorf("expected int, got %v", tok)
-	// return 0, errorf("expected int at %d, got %v", off, tok)
-}
 
 func testData() []byte {
 	var b bytes.Buffer
@@ -228,29 +212,6 @@ func BenchmarkList(b *testing.B) {
 	}
 }
 
-func BenchmarkListStdStream(b *testing.B) {
-	b.StopTimer()
-	v := testData()
-	b.StartTimer()
-	b.ReportAllocs()
-	var r []int64
-	for i := 0; i < b.N; i++ {
-		j := json.NewDecoder(bytes.NewReader(v))
-		j.UseNumber()
-		for {
-			if tok, err := j.Token(); err != nil {
-				break
-			} else if n, ok := tok.(json.Number); ok {
-				if n, err := n.Int64(); err != nil {
-					b.Fatal(err)
-				} else {
-					r = append(r, n)
-				}
-			}
-		}
-	}
-}
-
 func BenchmarkListStd(b *testing.B) {
 	b.StopTimer()
 	v := testData()
@@ -267,14 +228,14 @@ const t1 = `{"pandoc-api-version":[1,23,1],"meta":{},"blocks":[{"t":"Header","c"
 func BenchmarkRead(b *testing.B) {
 	for i := 0; i < b.N; i++ {
 		r := strings.NewReader(t1)
-		_, _ = Read(r)
+		_, _ = ReadFrom(r)
 	}
 }
 
 func BenchmarkQuery1(b *testing.B) {
 	b.StopTimer()
 	r := strings.NewReader(t1)
-	doc, err := Read(r)
+	doc, err := ReadFrom(r)
 	if err != nil {
 		b.Fatal(err)
 	}
@@ -282,9 +243,8 @@ func BenchmarkQuery1(b *testing.B) {
 	b.ReportAllocs()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
-		Query(doc, func(elt *Header) WalkResult {
+		Query(doc, func(elt *Header) {
 			i++
-			return WalkContinue
 		})
 	}
 	_ = i

@@ -11,7 +11,7 @@ import (
 )
 
 // Simple streaming JSON parser suitable for parsing pandoc JSON AST.
-// It does not support unicode escapes in strings, but pandoc never
+// It does not support unicode escapes in strings, as pandoc never
 // produces them.
 //
 // On the other hand, it's much faster than encoding/json and
@@ -131,11 +131,11 @@ func (p *scanner) numberIsInt() bool {
 	return p.intnum
 }
 
-func (p *scanner) int() int64 {
+func (p *scanner) int() int {
 	if !p.intnum {
-		return int64(math.Float64frombits(uint64(p.num)))
+		return int(math.Float64frombits(uint64(p.num)))
 	} else {
-		return p.num
+		return int(p.num)
 	}
 }
 
@@ -230,17 +230,11 @@ func (p *scanner) peek() token {
 	case '"':
 		return tokStr
 	case 'n':
-		if p.ensure(4) && string(p.buf[p.pos:p.pos+4]) == "null" {
-			return tokNull
-		}
+		return tokNull
 	case 't':
-		if p.ensure(4) && string(p.buf[p.pos:p.pos+4]) == "true" {
-			return tokTrue
-		}
+		return tokTrue
 	case 'f':
-		if p.ensure(5) && string(p.buf[p.pos:p.pos+5]) == "false" {
-			return tokFalse
-		}
+		return tokFalse
 	case '-', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9':
 		return tokNumber
 	}
