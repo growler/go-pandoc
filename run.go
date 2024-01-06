@@ -1,7 +1,6 @@
 package pandoc
 
 import (
-	"bytes"
 	"errors"
 	"fmt"
 	"io"
@@ -28,7 +27,6 @@ var DefaultFormat = Conf{
 func Format(f string) Conf {
 	return Conf{Format: f}
 }
-
 
 // Returns a Conf with a specified path to pandoc executable.
 func (c Conf) WithPandoc(path string) Conf {
@@ -78,13 +76,17 @@ func (c Conf) WithOpt(opt string, val ...string) Conf {
 	}
 	if len(opt) == 1 {
 		c.Opts = append(c.Opts, "-"+opt)
-		if len(val) > 0 {
+		if len(val) == 1 {
 			c.Opts = append(c.Opts, val[0])
+		} else if len(val) > 1 {
+			c.Opts = append(c.Opts, val[0]+"="+val[1])
 		}
-	} else if len(val) > 0 {
-		c.Opts = append(c.Opts, "--"+opt+"="+val[0])
-	} else {
+	} else if len(val) == 0 {
 		c.Opts = append(c.Opts, "--"+opt)
+	} else if len(val) == 1 {
+		c.Opts = append(c.Opts, "--"+opt+"="+val[0])
+	} else if len(val) > 1 {
+		c.Opts = append(c.Opts, "--"+opt+"="+val[0]+":"+val[1])
 	}
 	return c
 }
@@ -151,8 +153,7 @@ func LoadFrom(r io.Reader, conf Conf) (*Pandoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
@@ -163,15 +164,12 @@ func LoadFrom(r io.Reader, conf Conf) (*Pandoc, error) {
 		readErr <- err
 	}()
 	p, err := ReadFrom(op)
-	if err != nil {		
+	if err != nil {
 		_, _ = io.Copy(io.Discard, op)
 		_ = cmd.Wait()
 		return nil, err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return nil, fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return nil, err
 	}
 	return p, nil
@@ -187,21 +185,17 @@ func LoadFile(f string, conf Conf) (*Pandoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	p, err := ReadFrom(op)
-	if err != nil {		
+	if err != nil {
 		_, _ = io.Copy(io.Discard, op)
 		_ = cmd.Wait()
 		return nil, err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return nil, fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return nil, err
 	}
 	return p, nil
@@ -217,21 +211,17 @@ func LoadFiles(f []string, conf Conf) (*Pandoc, error) {
 	if err != nil {
 		return nil, err
 	}
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return nil, err
 	}
 	p, err := ReadFrom(op)
-	if err != nil {		
+	if err != nil {
 		_, _ = io.Copy(io.Discard, op)
 		_ = cmd.Wait()
 		return nil, err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return nil, fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return nil, err
 	}
 	return p, nil
@@ -247,8 +237,7 @@ func (p *Pandoc) StoreTo(w io.Writer, conf Conf) error {
 		return nil
 	}
 	cmd.Stdout = w
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -262,9 +251,6 @@ func (p *Pandoc) StoreTo(w io.Writer, conf Conf) error {
 		return err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return err
 	}
 	return nil
@@ -280,9 +266,8 @@ func (p *Pandoc) StoreFile(f string, conf Conf) error {
 	if err != nil {
 		return nil
 	}
-	var errBuf bytes.Buffer
-	cmd.Stdout = &errBuf
-	cmd.Stderr = &errBuf
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -296,9 +281,6 @@ func (p *Pandoc) StoreFile(f string, conf Conf) error {
 		return err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return err
 	}
 	return nil
@@ -314,8 +296,7 @@ func StoreTo(w io.Writer, conf Conf, meta Meta, docs ...*Pandoc) error {
 		return nil
 	}
 	cmd.Stdout = w
-	var errBuf bytes.Buffer
-	cmd.Stderr = &errBuf
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -329,9 +310,6 @@ func StoreTo(w io.Writer, conf Conf, meta Meta, docs ...*Pandoc) error {
 		return err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return err
 	}
 	return nil
@@ -347,9 +325,8 @@ func StoreFile(f string, conf Conf, meta Meta, docs ...*Pandoc) error {
 	if err != nil {
 		return nil
 	}
-	var errBuf bytes.Buffer
-	cmd.Stdout = &errBuf
-	cmd.Stderr = &errBuf
+	cmd.Stdout = os.Stdout
+	cmd.Stderr = os.Stderr
 	if err := cmd.Start(); err != nil {
 		return err
 	}
@@ -363,9 +340,6 @@ func StoreFile(f string, conf Conf, meta Meta, docs ...*Pandoc) error {
 		return err
 	}
 	if err = cmd.Wait(); err != nil {
-		if errBuf.Len() > 0 {
-			return fmt.Errorf("%w: %s", err, errBuf.String())
-		}
 		return err
 	}
 	return nil

@@ -113,6 +113,9 @@ func (p *Pandoc) clone() Element {
 	return &c
 }
 func (p *Pandoc) blocks() []Block { return p.Blocks }
+func (p *Pandoc) Apply(transformers ...func(*Pandoc) (*Pandoc, error)) (*Pandoc, error) {
+	return apply(p, transformers...)
+}
 
 // Pandoc's MetaMap entry.
 type MetaMapEntry struct {
@@ -228,6 +231,25 @@ func (m *MetaInlines) clone() Element {
 }
 func (m *MetaInlines) element() {}
 func (m *MetaInlines) meta()    {}
+func (m *MetaInlines) Text() string {
+	var sb strings.Builder
+	walkList(m.Inlines, func(i Inline) ([]Inline, error) {
+		switch i := i.(type) {
+		case *Str:
+			sb.WriteString(i.Text)
+		case *Space:
+			sb.WriteByte(' ')
+		case *SoftBreak:
+			sb.WriteByte('\n')
+		case *LineBreak:
+			sb.WriteByte('\n')
+		case *Note:
+			return nil, Skip
+		}
+		return nil, Continue
+	})
+	return sb.String()
+}
 
 // Pandoc document metadata blocks block
 type MetaBlocks struct {
@@ -262,6 +284,7 @@ const MetaStringTag = Tag("MetaString")
 
 func (MetaString) Tag() Tag         { return MetaStringTag }
 func (s MetaString) clone() Element { return s }
+func (s MetaString) String() string { return string(s) }
 func (MetaString) element()         {}
 func (MetaString) meta()            {}
 
@@ -432,6 +455,9 @@ func (e *Emph) clone() Element {
 }
 func (e *Emph) inline()  {}
 func (e *Emph) element() {}
+func (e *Emph) Apply(transformers ...func(*Emph) (*Emph, error)) (*Emph, error) {
+	return apply(e, transformers...)
+}
 
 // Underlined text (list of inlines)
 type Underline struct {
@@ -448,6 +474,9 @@ func (u *Underline) clone() Element {
 	return &c
 }
 func (u *Underline) element() {}
+func (u *Underline) Apply(transformers ...func(*Underline) (*Underline, error)) (*Underline, error) {
+	return apply(u, transformers...)
+}
 
 // Strongly emphasized text (list of inlines)
 type Strong struct {
@@ -464,6 +493,9 @@ func (s *Strong) clone() Element {
 	return &c
 }
 func (s *Strong) element() {}
+func (s *Strong) Apply(transformers ...func(*Strong) (*Strong, error)) (*Strong, error) {
+	return apply(s, transformers...)
+}
 
 // Strikeout text (list of inlines)
 type Strikeout struct {
@@ -480,6 +512,9 @@ func (s *Strikeout) clone() Element {
 	return &c
 }
 func (s *Strikeout) element() {}
+func (s *Strikeout) Apply(transformers ...func(*Strikeout) (*Strikeout, error)) (*Strikeout, error) {
+	return apply(s, transformers...)
+}
 
 // Superscripted text (list of inlines)
 type Superscript struct {
@@ -496,6 +531,9 @@ func (s *Superscript) clone() Element {
 }
 func (s *Superscript) inline()  {}
 func (s *Superscript) element() {}
+func (s *Superscript) Apply(transformers ...func(*Superscript) (*Superscript, error)) (*Superscript, error) {
+	return apply(s, transformers...)
+}
 
 // Subscripted text (list of inlines)
 type Subscript struct {
@@ -512,6 +550,9 @@ func (s *Subscript) clone() Element {
 	return &c
 }
 func (s *Subscript) element() {}
+func (s *Subscript) Apply(transformers ...func(*Subscript) (*Subscript, error)) (*Subscript, error) {
+	return apply(s, transformers...)
+}
 
 // Small capitals (list of inlines)
 type SmallCaps struct {
@@ -528,6 +569,9 @@ func (s *SmallCaps) clone() Element {
 	return &c
 }
 func (s *SmallCaps) element() {}
+func (s *SmallCaps) Apply(transformers ...func(*SmallCaps) (*SmallCaps, error)) (*SmallCaps, error) {
+	return apply(s, transformers...)
+}
 
 type QuoteType Tag
 
@@ -552,6 +596,9 @@ func (q *Quoted) clone() Element {
 	return &c
 }
 func (q *Quoted) element() {}
+func (q *Quoted) Apply(transformers ...func(*Quoted) (*Quoted, error)) (*Quoted, error) {
+	return apply(q, transformers...)
+}
 
 type CitationMode Tag
 
@@ -570,9 +617,18 @@ type Citation struct {
 	Hash    int
 }
 
+func (c *Citation) element() {}
+func (c *Citation) clone() Element {
+	c1 := *c
+	return &c1
+}
+func (c *Citation) Apply(transformers ...func(*Citation) (*Citation, error)) (*Citation, error) {
+	return apply(c, transformers...)
+}
+
 // Citation (list of inlines)
 type Cite struct {
-	Citations []Citation
+	Citations []*Citation
 	Inlines   []Inline
 }
 
@@ -586,6 +642,9 @@ func (c *Cite) clone() Element {
 	return &c2
 }
 func (c *Cite) element() {}
+func (c *Cite) Apply(transformers ...func(*Cite) (*Cite, error)) (*Cite, error) {
+	return apply(c, transformers...)
+}
 
 // Inline code (literal)
 type Code struct {
@@ -703,6 +762,9 @@ func (l *Link) clone() Element {
 }
 func (l *Link) inline()  {}
 func (l *Link) element() {}
+func (l *Link) Apply(transformers ...func(*Link) (*Link, error)) (*Link, error) {
+	return apply(l, transformers...)
+}
 
 // Image: alt text (list of inlines), target
 type Image struct {
@@ -721,6 +783,9 @@ func (i *Image) clone() Element {
 }
 func (i *Image) element() {}
 func (i *Image) inline()  {}
+func (i *Image) Apply(transformers ...func(*Image) (*Image, error)) (*Image, error) {
+	return apply(i, transformers...)
+}
 
 // Footnote: list of blocks
 type Note struct {
@@ -737,6 +802,9 @@ func (n *Note) clone() Element {
 }
 func (n *Note) element() {}
 func (n *Note) inline()  {}
+func (n *Note) Apply(transformers ...func(*Note) (*Note, error)) (*Note, error) {
+	return apply(n, transformers...)
+}
 
 // Generic inline container with attributes
 type Span struct {
@@ -754,6 +822,9 @@ func (s *Span) clone() Element {
 }
 func (s *Span) inline()  {}
 func (s *Span) element() {}
+func (s *Span) Apply(transformers ...func(*Span) (*Span, error)) (*Span, error) {
+	return apply(s, transformers...)
+}
 
 // Plain text, not a paragraph
 type Plain struct {
@@ -770,6 +841,9 @@ func (p *Plain) clone() Element {
 }
 func (p *Plain) block()   {}
 func (p *Plain) element() {}
+func (p *Plain) Apply(transformers ...func(*Plain) (*Plain, error)) (*Plain, error) {
+	return apply(p, transformers...)
+}
 
 // Paragraph (list of inlines)
 type Para struct {
@@ -786,6 +860,9 @@ func (p *Para) clone() Element {
 }
 func (p *Para) block()   {}
 func (p *Para) element() {}
+func (p *Para) Apply(transformers ...func(*Para) (*Para, error)) (*Para, error) {
+	return apply(p, transformers...)
+}
 
 // Multiple non-breaking lines
 type LineBlock struct {
@@ -801,6 +878,9 @@ func (b *LineBlock) clone() Element {
 }
 func (b *LineBlock) block()   {}
 func (b *LineBlock) element() {}
+func (b *LineBlock) Apply(transformers ...func(*LineBlock) (*LineBlock, error)) (*LineBlock, error) {
+	return apply(b, transformers...)
+}
 
 // Code block (literal)
 type CodeBlock struct {
@@ -849,6 +929,9 @@ func (b *BlockQuote) clone() Element {
 }
 func (b *BlockQuote) block()   {}
 func (b *BlockQuote) element() {}
+func (b *BlockQuote) Apply(transformers ...func(*BlockQuote) (*BlockQuote, error)) (*BlockQuote, error) {
+	return apply(b, transformers...)
+}
 
 type ListNumberStyle Tag
 
@@ -892,10 +975,13 @@ func (l *OrderedList) clone() Element {
 }
 func (l *OrderedList) block()   {}
 func (l *OrderedList) element() {}
+func (l *OrderedList) Apply(transformers ...func(*OrderedList) (*OrderedList, error)) (*OrderedList, error) {
+	return apply(l, transformers...)
+}
 
 // Bullet list (list of items, each a list of blocks)
 type BulletList struct {
-	Blocks [][]Block
+	Items [][]Block
 }
 
 const BulletListTag = Tag("BulletList")
@@ -907,6 +993,9 @@ func (l *BulletList) clone() Element {
 }
 func (l *BulletList) block()   {}
 func (l *BulletList) element() {}
+func (l *BulletList) Apply(transformers ...func(*BulletList) (*BulletList, error)) (*BulletList, error) {
+	return apply(l, transformers...)
+}
 
 type Definition struct {
 	Term       []Inline
@@ -927,6 +1016,9 @@ func (d *DefinitionList) clone() Element {
 }
 func (d *DefinitionList) block()   {}
 func (d *DefinitionList) element() {}
+func (d *DefinitionList) Apply(transformers ...func(*DefinitionList) (*DefinitionList, error)) (*DefinitionList, error) {
+	return apply(d, transformers...)
+}
 
 var HR = &HorizontalRule{}
 
@@ -957,6 +1049,9 @@ func (h *Header) clone() Element {
 }
 func (h *Header) block()   {}
 func (h *Header) element() {}
+func (h *Header) Apply(transformers ...func(*Header) (*Header, error)) (*Header, error) {
+	return apply(h, transformers...)
+}
 
 func (h *Header) Title() string {
 	var sb strings.Builder
@@ -979,9 +1074,8 @@ func (h *Header) Title() string {
 }
 
 type Caption struct {
-	HasShort bool
-	Short    []Inline
-	Long     []Block
+	Short []Inline
+	Long  []Block
 }
 
 type Alignment Tag
@@ -1019,12 +1113,30 @@ type ColSpec struct {
 
 type TableHeadFoot struct {
 	Attr
-	Rows []TableRow
+	Rows []*TableRow
+}
+
+func (t *TableHeadFoot) element() {}
+func (t *TableHeadFoot) clone() Element {
+	c := *t
+	return &c
+}
+func (t *TableHeadFoot) Apply(transformers ...func(*TableHeadFoot) (*TableHeadFoot, error)) (*TableHeadFoot, error) {
+	return apply(t, transformers...)
 }
 
 type TableRow struct {
 	Attr
-	Cells []TableCell
+	Cells []*TableCell
+}
+
+func (t *TableRow) element() {}
+func (t *TableRow) clone() Element {
+	c := *t
+	return &c
+}
+func (t *TableRow) Apply(transformers ...func(*TableRow) (*TableRow, error)) (*TableRow, error) {
+	return apply(t, transformers...)
 }
 
 type TableCell struct {
@@ -1035,11 +1147,30 @@ type TableCell struct {
 	Blocks  []Block
 }
 
+func (t *TableCell) element() {}
+func (t *TableCell) clone() Element {
+	c := *t
+	return &c
+}
+func (t *TableCell) blocks() []Block { return t.Blocks }
+func (t *TableCell) Apply(transformers ...func(*TableCell) (*TableCell, error)) (*TableCell, error) {
+	return apply(t, transformers...)
+}
+
 type TableBody struct {
 	Attr
 	RowHeadColumns int
-	Head           []TableRow
-	Body           []TableRow
+	Head           []*TableRow
+	Body           []*TableRow
+}
+
+func (t *TableBody) element() {}
+func (t *TableBody) clone() Element {
+	c := *t
+	return &c
+}
+func (t *TableBody) Apply(transformers ...func(*TableBody) (*TableBody, error)) (*TableBody, error) {
+	return apply(t, transformers...)
 }
 
 // Table, with attributes, caption, optional short caption, column alignments
@@ -1049,7 +1180,7 @@ type Table struct {
 	Caption Caption
 	Aligns  []ColSpec
 	Head    TableHeadFoot
-	Bodies  []TableBody
+	Bodies  []*TableBody
 	Foot    TableHeadFoot
 }
 
@@ -1062,6 +1193,9 @@ func (t *Table) clone() Element {
 }
 func (t *Table) block()   {}
 func (t *Table) element() {}
+func (t *Table) Apply(transformers ...func(*Table) (*Table, error)) (*Table, error) {
+	return apply(t, transformers...)
+}
 
 // Figure, with attributes, caption, and content (list of blocks)
 type Figure struct {
@@ -1079,6 +1213,9 @@ func (f *Figure) clone() Element {
 }
 func (f *Figure) block()   {}
 func (f *Figure) element() {}
+func (f *Figure) Apply(transformers ...func(*Figure) (*Figure, error)) (*Figure, error) {
+	return apply(f, transformers...)
+}
 
 // Generic block container with attributes
 type Div struct {
@@ -1096,3 +1233,6 @@ func (d *Div) clone() Element {
 }
 func (d *Div) block()   {}
 func (d *Div) element() {}
+func (d *Div) Apply(transformers ...func(*Div) (*Div, error)) (*Div, error) {
+	return apply(d, transformers...)
+}

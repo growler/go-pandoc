@@ -50,6 +50,11 @@ var _ []writable = []writable{
 	&Table{},
 	&Figure{},
 	&Div{},
+
+	&TableBody{},
+	&TableHeadFoot{},
+	&TableRow{},
+	&TableCell{},
 }
 
 func (s *Str) write(w io.Writer) error {
@@ -98,45 +103,30 @@ func writeField[T writable](w io.Writer, name string, d byte, v T) error {
 	return writeDelim(w, d)
 }
 
-type citationList []Citation
-
-func (c citationList) write(w io.Writer) error {
-	if err := writeDelim(w, '['); err != nil {
+func (c *Citation) write(w io.Writer) error {
+	if err := writeDelim(w, '{'); err != nil {
 		return err
 	}
-	for i := range c {
-		if i > 0 {
-			if err := writeDelim(w, ','); err != nil {
-				return err
-			}
-		}
-		if err := writeDelim(w, '{'); err != nil {
-			return err
-		}		
-		if err := writeField(w, "citationId", ',', str(c[i].Id)); err != nil {
-			return err
-		}
-		if err := writeField(w, "citationPrefix", ',', list(c[i].Prefix)); err != nil {
-			return err
-		}
-		if err := writeField(w, "citationSuffix", ',', list(c[i].Suffix)); err != nil {
-			return err
-		}
-		if err := writeField(w, "citationMode", ',', taggedStr(c[i].Mode)); err != nil {
-			return err
-		}
-		if err := writeField(w, "citationNoteNum", ',', num(c[i].NoteNum)); err != nil {
-			return err
-		}
-		if err := writeField(w, "citationHash", '}', num(c[i].Hash)); err != nil {
-			return err
-		}
+	if err := writeField(w, "citationId", ',', str(c.Id)); err != nil {
+		return err
 	}
-	return writeDelim(w, ']')
+	if err := writeField(w, "citationPrefix", ',', list(c.Prefix)); err != nil {
+		return err
+	}
+	if err := writeField(w, "citationSuffix", ',', list(c.Suffix)); err != nil {
+		return err
+	}
+	if err := writeField(w, "citationMode", ',', taggedStr(c.Mode)); err != nil {
+		return err
+	}
+	if err := writeField(w, "citationNoteNum", ',', num(c.NoteNum)); err != nil {
+		return err
+	}
+	return writeField(w, "citationHash", '}', num(c.Hash))
 }
 
 func (c *Cite) write(w io.Writer) error {
-	return withTag(c, tuple2(citationList(c.Citations), list(c.Inlines))).write(w)
+	return withTag(c, tuple2(list(c.Citations), list(c.Inlines))).write(w)
 }
 func (c *Code) write(w io.Writer) error {
 	return withTag(c, tuple2(&c.Attr, str(c.Text))).write(w)
@@ -155,7 +145,7 @@ func (b *LineBreak) write(w io.Writer) error {
 }
 
 func (p Caption) write(w io.Writer) error {
-	return tuple2(captionShort{p.HasShort, p.Short}, list(p.Long)).write(w)
+	return tuple2(captionShort{p.Short}, list(p.Long)).write(w)
 }
 
 func (m *Math) write(w io.Writer) error {
@@ -227,7 +217,7 @@ func (p *OrderedList) write(w io.Writer) error {
 }
 
 func (p *BulletList) write(w io.Writer) error {
-	return withTag(p, dlist(p.Blocks)).write(w)
+	return withTag(p, dlist(p.Items)).write(w)
 }
 
 func (d Definition) write(w io.Writer) error {
@@ -261,7 +251,7 @@ func (c ColSpec) write(w io.Writer) error {
 	return tuple2(taggedStr(c.Align), c.Width).write(w)
 }
 
-func (r TableCell) write(w io.Writer) error {
+func (r *TableCell) write(w io.Writer) error {
 	if err := writeDelim(w, '['); err != nil {
 		return err
 	}
@@ -295,7 +285,7 @@ func (r TableCell) write(w io.Writer) error {
 	return writeDelim(w, ']')
 }
 
-func (r TableRow) write(w io.Writer) error {
+func (r *TableRow) write(w io.Writer) error {
 	return tuple2(&r.Attr, list(r.Cells)).write(w)
 }
 
@@ -303,7 +293,7 @@ func (hf *TableHeadFoot) write(w io.Writer) error {
 	return tuple2(&hf.Attr, list(hf.Rows)).write(w)
 }
 
-func (b TableBody) write(w io.Writer) error {
+func (b *TableBody) write(w io.Writer) error {
 	if err := writeDelim(w, '['); err != nil {
 		return err
 	}
@@ -488,12 +478,11 @@ func (m *MetaList) write(w io.Writer) error {
 // -------------------
 
 type captionShort struct {
-	notNull bool
 	inlines []Inline
 }
 
 func (w captionShort) write(wrt io.Writer) error {
-	if w.notNull {
+	if len(w.inlines) > 0 {
 		return list(w.inlines).write(wrt)
 	} else {
 		return writeNull(wrt)
@@ -733,14 +722,14 @@ func appendQuote(b []byte, s string) []byte {
 	var r = 2
 	for i := 0; i < len(s); {
 		if j := strings.IndexAny(s[i:], escapable); j >= 0 {
-			i += j+1
-			r += j+2
+			i += j + 1
+			r += j + 2
 		} else {
-			r += len(s)-i
+			r += len(s) - i
 			break
 		}
 	}
-	p := len(b)	
+	p := len(b)
 	b = append(b, make([]byte, r)...)
 	b[p] = '"'
 	p++
@@ -767,10 +756,10 @@ func appendQuote(b []byte, s string) []byte {
 				b[p] = 't'
 			}
 			p++
-			i += j+1
+			i += j + 1
 		} else {
 			copy(b[p:], s[i:])
-			p += len(s)-i
+			p += len(s) - i
 			break
 		}
 	}
@@ -887,11 +876,11 @@ func (p *Pandoc) write(w io.Writer) error {
 //	if err := doc.WriteTo(os.Stdout); err != nil {
 //		log.Fatal(err)
 //	}
-func (p *Pandoc) WriteTo (w io.Writer) error {
+func (p *Pandoc) WriteTo(w io.Writer) error {
 	return p.write(w)
 }
 
-// Prints the JSON encoding of element e to w. 
+// Prints the JSON encoding of element e to w.
 // Usefull for debugging.
 func Fprint(w io.Writer, e Element) error {
 	return e.write(w)

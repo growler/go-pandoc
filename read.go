@@ -20,10 +20,7 @@ func readInline(s *scanner) (ret Inline, err error) {
 	if err := s.expect(tokStr); err != nil {
 		return nil, err
 	}
-	if !s.stringInBuffer() {
-		return nil, errorf("expected tag, got %s", s.string())
-	}
-	switch Tag(s.buf[s.str : s.pos-1]) {
+	switch Tag(s.string()) {
 	case SpaceTag:
 		return readEmptyObj(SP)(s)
 	case SoftBreakTag:
@@ -232,16 +229,20 @@ func readSpan(s *scanner) (*Span, error) {
 
 var readCitationMode = readTags(AuthorInText, SuppressAuthor, NormalCitation)
 
-func readCitation(s *scanner) (citation Citation, err error) {
-	if err := s.expect(tokLBrace); err != nil {
-		return Citation{}, err
+func readCitation(s *scanner) (*Citation, error) {
+	var (
+		citation Citation
+		err      error
+	)
+	if err = s.expect(tokLBrace); err != nil {
+		return nil, err
 	}
 	for i := 6; i > 0; i-- {
-		if err := s.expect(tokStr); err != nil {
-			return Citation{}, err
+		if err = s.expect(tokStr); err != nil {
+			return nil, err
 		}
 		if !s.stringInBuffer() {
-			return Citation{}, errorf("expected string, got %s", s.string())
+			return nil, errorf("expected string, got %s", s.string())
 		}
 		switch string(s.buf[s.str : s.pos-1]) {
 		case "citationId":
@@ -255,15 +256,15 @@ func readCitation(s *scanner) (citation Citation, err error) {
 		case "citationNoteNum":
 			citation.NoteNum, err = readField(s, i, readInt)
 		case "citationHash":
-			citation.Hash, err = readField(s, i, readInt)	
+			citation.Hash, err = readField(s, i, readInt)
 		default:
-			return Citation{}, errorf("unknown citation field %q", s.string())
+			return nil, errorf("unknown citation field %q", s.string())
 		}
 		if err != nil {
-			return Citation{}, err
+			return nil, err
 		}
 	}
-	return citation, nil
+	return &citation, nil
 }
 
 // Cite
@@ -623,72 +624,72 @@ func readDefinition(s *scanner) (Definition, error) {
 	return Definition{terms, defs}, nil
 }
 
-func readTableBody(s *scanner) (TableBody, error) {
+func readTableBody(s *scanner) (*TableBody, error) {
 	tup, err := tupler(s, 4)
 	if err != nil {
-		return TableBody{}, err
+		return nil, err
 	}
 	attr, tup, err := readItem(readAttr)(s, tup)
 	if err != nil {
-		return TableBody{}, err
+		return nil, err
 	}
 	rhc, tup, err := readItem(readInt)(s, tup)
 	if err != nil {
-		return TableBody{}, err
+		return nil, err
 	}
 	head, tup, err := readItem(listr(readTableRow))(s, tup)
 	if err != nil {
-		return TableBody{}, err
+		return nil, err
 	}
 	body, _, err := readItem(listr(readTableRow))(s, tup)
 	if err != nil {
-		return TableBody{}, err
+		return nil, err
 	}
-	return TableBody{attr, rhc, head, body}, nil
+	return &TableBody{attr, rhc, head, body}, nil
 }
 
-func readTableCell(s *scanner) (TableCell, error) {
+func readTableCell(s *scanner) (*TableCell, error) {
 	tup, err := tupler(s, 5)
 	if err != nil {
-		return TableCell{}, err
+		return nil, err
 	}
 	attr, tup, err := readItem(readAttr)(s, tup)
 	if err != nil {
-		return TableCell{}, err
+		return nil, err
 	}
 	align, tup, err := readItem(readAlignment)(s, tup)
 	if err != nil {
-		return TableCell{}, err
+		return nil, err
 	}
 	rowspan, tup, err := readItem(readInt)(s, tup)
 	if err != nil {
-		return TableCell{}, err
+		return nil, err
 	}
 	colspan, tup, err := readItem(readInt)(s, tup)
 	if err != nil {
-		return TableCell{}, err
+		return nil, err
 	}
 	blocks, _, err := readItem(listr(readBlock))(s, tup)
 	if err != nil {
-		return TableCell{}, err
+		return nil, err
 	}
-	return TableCell{attr, align, rowspan, colspan, blocks}, nil
+	return &TableCell{attr, align, rowspan, colspan, blocks}, nil
 }
 
-func readTableRow(s *scanner) (TableRow, error) {
+func readTableRow(s *scanner) (*TableRow, error) {
 	tup, err := tupler(s, 2)
 	if err != nil {
-		return TableRow{}, err
+		return nil, err
 	}
 	attr, tup, err := readItem(readAttr)(s, tup)
 	if err != nil {
-		return TableRow{}, err
+		return nil, err
 	}
 	cells, _, err := readItem(listr(readTableCell))(s, tup)
 	if err != nil {
-		return TableRow{}, err
+		return nil, err
 	}
-	return TableRow{attr, cells}, nil
+	return &TableRow{attr, cells}, nil
 }
 
 func readTableHeadFoot(s *scanner) (TableHeadFoot, error) {
@@ -763,7 +764,6 @@ func readCaption(s *scanner) (Caption, error) {
 	if err != nil {
 		return Caption{}, err
 	}
-	var hasShort bool
 	var short []Inline
 	if tok := s.peek(); tok == tokNull {
 		_, tup, err = readItem(readNull)(s, tup)
@@ -771,7 +771,6 @@ func readCaption(s *scanner) (Caption, error) {
 			return Caption{}, err
 		}
 	} else {
-		hasShort = true
 		short, tup, err = readItem(listr(readInline))(s, tup)
 		if err != nil {
 			return Caption{}, err
@@ -781,7 +780,7 @@ func readCaption(s *scanner) (Caption, error) {
 	if err != nil {
 		return Caption{}, err
 	}
-	return Caption{hasShort, short, long}, nil
+	return Caption{short, long}, nil
 }
 
 func readAttrKV(s *scanner) (KV, error) {
@@ -1203,8 +1202,8 @@ func ReadFrom(r io.Reader) (*Pandoc, error) {
 		return nil, err
 	}
 	var (
-		doc                            = &Pandoc{}
-		err                            error
+		doc = &Pandoc{}
+		err error
 	)
 	for i := 3; i > 0; i-- {
 		if err := s.expect(tokStr); err != nil {
@@ -1214,7 +1213,7 @@ func ReadFrom(r io.Reader) (*Pandoc, error) {
 			return nil, errorf("expected string, got %s", s.string())
 		}
 		switch string(s.buf[s.str : s.pos-1]) {
-		case "pandoc-api-version":			
+		case "pandoc-api-version":
 			if version, err := readField(&s, i, listr(readInt)); err != nil {
 				return nil, err
 			} else if cmpSemver(version, _Version) < 0 {

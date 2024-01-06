@@ -3,10 +3,12 @@ package dot
 import "github.com/growler/go-pandoc"
 
 var (
-	Continue = pandoc.Continue
-	Replace  = pandoc.Replace
-	Skip     = pandoc.Skip
-	SkipAll  = pandoc.SkipAll
+	Continue        = pandoc.Continue
+	Skip            = pandoc.Skip
+	Halt            = pandoc.Halt
+	ReplaceContinue = pandoc.ReplaceContinue
+	ReplaceSkip     = pandoc.ReplaceSkip
+	ReplaceHalt     = pandoc.ReplaceHalt
 )
 
 func Blocks(b ...pandoc.Block) []pandoc.Block {
@@ -18,18 +20,18 @@ func Inlines(i ...pandoc.Inline) []pandoc.Inline {
 }
 
 // Text (string)
-func Str(s string) pandoc.Inline { 
-	return &pandoc.Str{Text: s} 
+func Str(s string) pandoc.Inline {
+	return &pandoc.Str{Text: s}
 }
 
 // Emphasized text (list of inlines)
-func Emph(i ...pandoc.Inline) *pandoc.Emph { 
-	return &pandoc.Emph{Inlines: i} 
+func Emph(i ...pandoc.Inline) *pandoc.Emph {
+	return &pandoc.Emph{Inlines: i}
 }
 
 // Underlined text (list of inlines)
-func Underline(i ...pandoc.Inline) *pandoc.Underline { 
-	return &pandoc.Underline{Inlines: i} 
+func Underline(i ...pandoc.Inline) *pandoc.Underline {
+	return &pandoc.Underline{Inlines: i}
 }
 
 // Strongly emphasized text (list of inlines)
@@ -73,8 +75,8 @@ const (
 	AuthorInText   = pandoc.AuthorInText
 )
 
-func Citation(id string, mode pandoc.CitationMode, noteNum int, prefix, suffix []pandoc.Inline) pandoc.Citation {
-	return pandoc.Citation{
+func Citation(id string, mode pandoc.CitationMode, noteNum int, prefix, suffix []pandoc.Inline) *pandoc.Citation {
+	return &pandoc.Citation{
 		Id:      id,
 		Prefix:  prefix,
 		Suffix:  suffix,
@@ -84,7 +86,7 @@ func Citation(id string, mode pandoc.CitationMode, noteNum int, prefix, suffix [
 }
 
 // Citation (list of inlines as citation prefix).
-func Cite(c ...pandoc.Citation) *pandoc.Cite {
+func Cite(c ...*pandoc.Citation) *pandoc.Cite {
 	return &pandoc.Cite{Citations: c}
 }
 
@@ -108,7 +110,7 @@ const (
 )
 
 // TeX math (literal). The first argument is the math type.
-func Math(t pandoc.MathType, text string) *pandoc.Math { 
+func Math(t pandoc.MathType, text string) *pandoc.Math {
 	return &pandoc.Math{MathType: t, Text: text}
 }
 
@@ -129,8 +131,8 @@ func Image(attr pandoc.Attr, url string, title string, i ...pandoc.Inline) *pand
 }
 
 // Footnote or endnote (list of blocks)
-func Note(i ...pandoc.Block) pandoc.Inline { 
-	return &pandoc.Note{Blocks: i} 
+func Note(i ...pandoc.Block) pandoc.Inline {
+	return &pandoc.Note{Blocks: i}
 }
 
 // Generic inline container with attributes.
@@ -170,13 +172,12 @@ func Para(i ...pandoc.Inline) *pandoc.Para {
 }
 
 func BulletList(i ...[]pandoc.Block) *pandoc.BulletList {
-	return &pandoc.BulletList{Blocks: i}
+	return &pandoc.BulletList{Items: i}
 }
 
 func CodeBlock(attr pandoc.Attr, text string) *pandoc.CodeBlock {
 	return &pandoc.CodeBlock{Attr: attr, Text: text}
 }
-
 
 func Div(attr pandoc.Attr, i ...pandoc.Block) *pandoc.Div {
 	return &pandoc.Div{Attr: attr, Blocks: i}

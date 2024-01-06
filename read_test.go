@@ -96,7 +96,7 @@ func BenchmarkParse(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	r := bytes.NewReader(data)	
+	r := bytes.NewReader(data)
 	b.ReportAllocs()
 	b.StartTimer()
 	for i := 0; i < b.N; i++ {
@@ -118,14 +118,14 @@ func BenchmarkQuery(b *testing.B) {
 	if err != nil {
 		b.Fatal(err)
 	}
-	r := bytes.NewReader(data)	
+	r := bytes.NewReader(data)
 	doc, err := ReadFrom(r)
 	if err != nil {
 		b.Fatal(err)
 	}
 	doc.Meta = nil
 	i := 0
-	Query(doc, func (Element) {
+	Query(doc, func(Element) {
 		i++
 	})
 	b.ReportAllocs()
